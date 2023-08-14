@@ -1,0 +1,113 @@
+version: "2"
+services:
+  prometheus:
+    image: prom/prometheus:v2.46.0
+    ports:
+      - 9090:9090
+    volumes:
+      - "./grafana/config/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+    depends_on:
+      - "mimir-1"
+    networks:
+      - exporter_sinacor_cvm35
+  grafana:
+    image: grafana/grafana:9.3.0
+    pull_policy: always
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_USERS_DEFAULT_THEME=dark
+      - GF_LOG_MODE=console
+      - GF_LOG_LEVEL=critical
+    ports:
+      - "3000:3000"
+    networks:
+      - exporter_sinacor_cvm35   
+    depends_on:
+      - prometheus
+    volumes:
+      - ./grafana/config/grafana-dashboard.yml:/etc/grafana/provisioning/dashboards/provisioning-dashboards.yaml:ro
+      - ./grafana/config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/provisioning-datasources.yaml:ro
+      - ./grafana/config/dashboard.json:/var/lib/grafana/dashboards/sinacor-dashboard.json:ro
+      - ./grafana/config/dashboard-fluentd.json:/var/lib/grafana/dashboards/fluentd-dashboard.json:ro
+  minio:
+    image: minio/minio:RELEASE.2023-08-09T23-30-22Z.fips
+    entrypoint: [""]
+    command: ["sh", "-c", "mkdir -p /data/mimir && minio server --quiet /data"]
+    environment:
+      - MINIO_ROOT_USER=mimir
+      - MINIO_ROOT_PASSWORD=mimirsecret
+    networks:
+      - exporter_sinacor_cvm35
+  load-balancer:
+    image: nginx:stable-alpine3.17
+    volumes:
+      - ./grafana/config/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - "mimir-1"
+    ports:
+      - "9009:9009"
+    expose:
+      - "9009"
+    networks:
+      - exporter_sinacor_cvm35
+  mimir-1:
+    image: grafana/mimir:2.7.1
+    command: ["-config.file=/etc/mimir.yaml"]
+    hostname: mimir-1
+    depends_on:
+      - minio
+    volumes:
+      - ./grafana/config/mimir.yaml:/etc/mimir.yaml
+      - ./grafana/config/alertmanager-fallback-config.yaml:/etc/alertmanager-fallback-config.yaml
+    networks:
+      - exporter_sinacor_cvm35
+  oracle_exporter:
+    image: ghcr.io/iamseth/oracledb_exporter:0.4.3
+    container_name: oracle_exporter
+    volumes: 
+      - "./oracle_exporter/config/default-metrics.toml:/default-metrics.toml:ro"
+    env_file:
+      - ./oracle_exporter/.env
+    ports:
+      - 9161:9161
+    networks:
+      - exporter_sinacor_cvm35
+  fluentd:
+    depends_on:
+      - loki
+    image: fluentd-xml-loki
+    ports:
+      - 24224:24224
+    command:
+      - "fluentd"
+      - "-v"
+      - "-p"
+      - "/fluentd/plugins"
+    environment:
+      LOKI_URL: http://loki:3100
+      LOKI_USERNAME:
+      LOKI_PASSWORD:
+      FLUENTD_CONF: fluentd.conf
+    deploy:
+      mode: global
+    volumes:
+      - ./fluentd/fluentd.conf:/fluentd/etc/fluentd.conf:rw
+      - ./fluentd/plugins/filter_fix.rb:/fluentd/plugins/filter_logs_fix.rb:rw
+    logging:
+      options:
+         tag: infra.monitoring
+    networks:
+      - exporter_sinacor_cvm35
+  loki:
+    image: grafana/loki:2.6.1
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./grafana/config/loki-config.yaml:/etc/loki/loki-config.yaml:rw
+    command: -config.file=/etc/loki/loki-config.yaml
+    networks:
+      - exporter_sinacor_cvm35
+networks:
+  exporter_sinacor_cvm35:
+    name: exporter_sinacor_cvm35
