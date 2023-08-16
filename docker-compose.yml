@@ -76,7 +76,7 @@ services:
   fluentd:
     depends_on:
       - loki
-    image: fluentd-xml-loki
+    image: vericode/fluentd-xml-loki
     ports:
       - 24224:24224
     command:
